@@ -7,6 +7,10 @@
 
 <!-- /!\ do not modify above this line -->
 
+# BT Customizations
+Open OCA PRs merged:
+- [OCA#8](https://github.com/OCA/sale-blanket/pull/8) sale_blanket_order
+
 # sale-blanket
 
 sale-blanket
