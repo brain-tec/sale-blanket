@@ -23,7 +23,7 @@ class BlanketOrderWizard(models.TransientModel):
         if blanket_order.state == "expired":
             raise UserError(
                 self.env._(
-                    "You can't create a sale order from " "an expired blanket order!"
+                    "You can't create a sale order from an expired blanket order!"
                 )
             )
         return blanket_order
@@ -49,7 +49,7 @@ class BlanketOrderWizard(models.TransientModel):
             line_company_id = line.company_id and line.company_id.id or False
             if company_id is not False and line_company_id != company_id:
                 raise UserError(
-                    self.env._("You have to select lines " "from the same company.")
+                    self.env._("You have to select lines from the same company.")
                 )
             else:
                 company_id = line_company_id
