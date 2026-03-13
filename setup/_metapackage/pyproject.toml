@@ -1,0 +1,11 @@
+[project]
+name = "odoo-addons-oca-sale-blanket"
+version = "19.0.20260312.0"
+dependencies = [
+    "odoo-addon-sale_blanket_order==19.0.*",
+]
+classifiers=[
+    "Programming Language :: Python",
+    "Framework :: Odoo",
+    "Framework :: Odoo :: 19.0",
+]
