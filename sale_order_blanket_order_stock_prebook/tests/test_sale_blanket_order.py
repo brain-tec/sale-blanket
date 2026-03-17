@@ -29,6 +29,30 @@ class TestSaleBlanketOrder(SaleOrderBlanketOrderCase):
             all(self.blanket_so.order_line.move_ids.mapped("used_for_sale_reservation"))
         )
 
+    def test_reservation_at_confirm_with_different_uom(self):
+        # test to check singleton error into the reservation logic when
+        # different uom are used on the blanket order line
+        product_uom = self.env["uom.uom"].create(
+            {
+                "name": "Test UoM",
+                "category_id": self.env.ref("uom.product_uom_categ_unit").id,
+                "factor_inv": 1,
+                "uom_type": "bigger",
+            }
+        )
+        blanket_line_product_2 = self.blanket_so.order_line.filtered(
+            lambda line: line.product_id == self.product_2
+        )
+        blanket_line_product_2.product_uom = product_uom
+        self.blanket_so.action_confirm()
+        self.assertEqual(
+            self.blanket_so.commitment_date.date(),
+            self.blanket_so.blanket_validity_start_date,
+        )
+        self.assertTrue(
+            all(self.blanket_so.order_line.move_ids.mapped("used_for_sale_reservation"))
+        )
+
     def test_change_reservation_mode(self):
         self.blanket_so.action_confirm()
         self.assertTrue(
