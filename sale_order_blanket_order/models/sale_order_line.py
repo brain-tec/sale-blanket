@@ -66,6 +66,14 @@ class SaleOrderLine(models.Model):
         copy=False,
         precompute=True,
     )
+    blanket_strict_packaging = fields.Boolean(
+        string="Strict Packaging",
+        related="order_id.blanket_strict_packaging",
+        readonly=True,
+        store=True,
+        copy=False,
+        precompute=True,
+    )
 
     def init(self):
         self._cr.execute(
@@ -84,6 +92,40 @@ class SaleOrderLine(models.Model):
                 AND blanket_validity_start_date <= blanket_validity_end_date
             """
         )
+
+    def _do_patch_compute_price_unit(self):
+        def _patch_compute_price_unit(self):
+            return self._patched_compute_price_unit(_patch_compute_price_unit.origin)
+
+        self._patch_method(
+            "_compute_price_unit",
+            _patch_compute_price_unit,
+        )
+
+    def _register_hook(self):
+        # this method is called at the end of the registry build, so we are
+        # sure that all the modules are loaded. We can use it to patch the
+        # _compute_price_unit method at the top of the call stack of the
+        # sale.order.line model to prevent the recompute of the price
+        # unit on confirmed blanket order lines
+        super()._register_hook()
+        self._do_patch_compute_price_unit()
+
+    def _patched_compute_price_unit(self, original_method):
+        """This method is the patched version of the _compute_price_unit method.
+        It is used to prevent the recompute of the price unit on confirmed blanket
+        order lines.
+
+        It's placed at the top of the call stack of the sale.order.line model to ensure
+        that the price unit is not recomputed on confirmed blanket order lines in all
+        the extensions of the sale.order.line model, even those that are not aware
+        of the blanket order concept.
+        """
+        to_compute = self.filtered(
+            lambda line: line.order_type != "blanket"
+            or line.state not in ("sale", "done")
+        )
+        return original_method(to_compute)
 
     @api.constrains("order_type", "price_unit")
     def _check_call_off_order_line_price(self):
@@ -108,6 +150,7 @@ class SaleOrderLine(models.Model):
         "product_packaging_id",
         "order_partner_id",
         "state",
+        "blanket_strict_packaging",
     )
     def _check_blanket_product_not_overlapping(self):
         """We check that a product is not part of multiple blanket orders
@@ -133,6 +176,7 @@ class SaleOrderLine(models.Model):
                 "product_packaging_id",
                 "order_partner_id",
                 "state",
+                "blanket_strict_packaging",
             ]
         )
         for rec in self:
@@ -180,7 +224,9 @@ class SaleOrderLine(models.Model):
             ]
             for (
                 matching_field
-            ) in self._get_call_off_line_to_blanked_line_matching_fields():
+            ) in rec._get_call_off_line_to_blanked_line_matching_fields(
+                strict_packaging=rec.blanket_strict_packaging
+            ):
                 value = rec[matching_field]
                 if isinstance(value, models.BaseModel):
                     value = value.id
@@ -290,7 +336,9 @@ class SaleOrderLine(models.Model):
                     )
                 )
 
-    def _get_call_off_line_to_blanked_line_matching_fields(self):
+    def _get_call_off_line_to_blanked_line_matching_fields(
+        self, strict_packaging=False
+    ):
         """Get the fields used to match call-off order lines to blanket order lines.
 
         Be careful to override this method if you want to add new fields to the matching
@@ -299,7 +347,9 @@ class SaleOrderLine(models.Model):
         that a product is not part of multiple blanket orders with overlapping validity
         periods.
         """
-        return ["product_id", "product_packaging_id", "order_partner_id"]
+        if strict_packaging:
+            return ["product_id", "product_packaging_id", "order_partner_id"]
+        return ["product_id", "order_partner_id"]
 
     def _get_blanket_lines_for_call_off_lines_dict(self, validate=True):
         """Get the matching blanket order lines for the call-off order lines.
@@ -317,7 +367,7 @@ class SaleOrderLine(models.Model):
             self._validate_blanket_lines_for_call_off_lines_dict(matching_dict)
         return matching_dict
 
-    def _to_blanket_line_matching_key(self):
+    def _to_blanket_line_matching_key(self, strict_packaging=False):
         """Compute the matching key for the blanket order line.
 
         The key is a tuple of the fields provided by the method
@@ -328,7 +378,9 @@ class SaleOrderLine(models.Model):
         return (
             *[
                 self[field]
-                for field in self._get_call_off_line_to_blanked_line_matching_fields()
+                for field in self._get_call_off_line_to_blanked_line_matching_fields(
+                    strict_packaging=strict_packaging
+                )
             ],
         )
 
@@ -348,11 +400,20 @@ class SaleOrderLine(models.Model):
         result = defaultdict(
             lambda: [self.env["sale.order.line"], self.env["sale.order.line"]]
         )
+
+        strict_lines = defaultdict(lambda: self.env["sale.order.line"])
+        loose_lines = defaultdict(lambda: self.env["sale.order.line"])
+        remaining_call_off_lines_ids = set(order_lines.ids)
+
         for line in order_lines:
             if line.display_type or line.state == "cancel":
                 continue
-            key = line._to_blanket_line_matching_key()
-            result[key][0] |= line
+            strict_lines[
+                line._to_blanket_line_matching_key(strict_packaging=True)
+            ] |= line
+            loose_lines[
+                line._to_blanket_line_matching_key(strict_packaging=False)
+            ] |= line
 
         for line in blanket_lines:
             if (
@@ -364,9 +425,27 @@ class SaleOrderLine(models.Model):
                 <= 0
             ):
                 continue
-            key = line._to_blanket_line_matching_key()
+            key = line._to_blanket_line_matching_key(
+                strict_packaging=line.blanket_strict_packaging
+            )
+            if line.blanket_strict_packaging:
+                call_off_line = strict_lines.pop(key, None)
+            else:
+                call_off_line = loose_lines.pop(key, None)
+            if call_off_line:
+                result[key][0] |= call_off_line
+                remaining_call_off_lines_ids -= set(call_off_line.ids)
             if key in result:
+                # if the key is already in the result, it means that at least one
+                # call-off line has been matched with another blanket line.
                 result[key][1] |= line
+
+        for line in order_lines.browse(remaining_call_off_lines_ids):
+            # put the remaining call-off lines in the result with an empty set of
+            # blanket line to trigger the validation error in case they are not linked
+            # to any blanket line
+            key = line._to_blanket_line_matching_key(strict_packaging=False)
+            result[key][0] |= line
         return result
 
     def _prepare_reserve_procurement_values(self, group_id=None):
@@ -620,11 +699,32 @@ class SaleOrderLine(models.Model):
         to deliver on the blanket order line.
         """
         self.ensure_one()
+        product_packaging_id = None
+        packaging = self.product_packaging_id
+        if packaging:
+            is_packaging_valid = packaging._check_qty_in_packaging(
+                product_uom_qty, self.product_uom
+            )
+            if self.blanket_strict_packaging and not is_packaging_valid:
+                raise ValidationError(
+                    _(
+                        "The quantity to deliver on the call-off order line must be "
+                        "compatible with the packaging defined on the blanket order "
+                        "line. (Product: '%(product)s', Packaging: '%(packaging)s', "
+                        "Quantity: '%(quantity)s %(uom)s')",
+                        product=self.product_id.display_name,
+                        packaging=packaging.display_name,
+                        quantity=product_uom_qty,
+                        uom=self.product_uom.name,
+                    )
+                )
+            if is_packaging_valid:
+                product_packaging_id = packaging.id
         return {
             "product_id": self.product_id.id,
             "product_uom_qty": product_uom_qty,
             "product_uom": self.product_uom.id,
-            "product_packaging_id": self.product_packaging_id.id,
+            "product_packaging_id": product_packaging_id,
         }
 
     def _prepare_call_of_vals_to_deliver_blanket_remaining_qty(self):
