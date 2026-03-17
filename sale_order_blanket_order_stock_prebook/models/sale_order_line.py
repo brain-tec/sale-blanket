@@ -49,7 +49,7 @@ class SaleOrderLine(models.Model):
                 remaining_qty = line.call_off_remaining_qty
                 if (
                     float_compare(
-                        remaining_qty, 0, precision_rounding=self.product_uom.rounding
+                        remaining_qty, 0, precision_rounding=line.product_uom.rounding
                     )
                     > 0
                 ):
