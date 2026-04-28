@@ -1,9 +1,10 @@
 [project]
 name = "odoo-addons-oca-sale-blanket"
-version = "18.0.20260323.0"
+version = "18.0.20260427.0"
 dependencies = [
     "odoo-addon-sale_blanket_order==18.0.*",
     "odoo-addon-sale_order_blanket_order==18.0.*",
+    "odoo-addon-sale_order_blanket_order_stock_prebook==18.0.*",
 ]
 classifiers=[
     "Programming Language :: Python",
