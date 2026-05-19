@@ -1,9 +1,10 @@
 [project]
 name = "odoo-addons-oca-sale-blanket"
-version = "18.0.20260508.0"
+version = "18.0.20260518.0"
 dependencies = [
     "odoo-addon-sale_blanket_order==18.0.*",
     "odoo-addon-sale_order_blanket_order==18.0.*",
+    "odoo-addon-sale_order_blanket_order_carrier_auto_assign==18.0.*",
     "odoo-addon-sale_order_blanket_order_stock_prebook==18.0.*",
     "odoo-addon-sale_order_blanket_order_stock_prebook_release==18.0.*",
 ]
